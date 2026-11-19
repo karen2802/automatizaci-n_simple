@@ -1,58 +1,116 @@
 # Módulo para consultar precios de acciones en tiempo real usando yfinance
+import re
+
 import yfinance as yf
+
 from utils.sanitizar import sanitizar
 
 # Diccionario para mapear nombres comunes de empresas a sus Tickers de bolsa correspondientes
 COMPANY_TICKERS = {
     "microsoft": "MSFT",
+    "microsoft corp": "MSFT",
     "apple": "AAPL",
+    "apple inc": "AAPL",
     "google": "GOOGL",
     "alphabet": "GOOGL",
     "amazon": "AMZN",
+    "tesla": "TSLA",
+    "tesla motors": "TSLA",
     "meta": "META",
     "facebook": "META",
     "netflix": "NFLX",
     "nvidia": "NVDA",
-    "apple inc": "AAPL",
-    "microsoft corp": "MSFT",
-
 }
 
-def obtener_precio_accion(driver, user_input):
+# Palabras de intención o relleno que nunca deben interpretarse como ticker
+PALABRAS_IGNORADAS = {
+    "cual", "cuales", "que", "es", "el", "la", "los", "las", "un", "una",
+    "de", "del", "en", "al", "por", "para", "con", "y",
+    "precio", "precios", "accion", "acciones", "valor", "valores", "stock",
+    "cotizacion", "cuanto", "cuesta", "vale", "dime", "me", "puedes",
+    "decir", "actual", "hoy", "ahora", "favor", "hola", "quiero", "saber",
+}
+
+MENSAJE_SIN_TICKER = (
+    "No pude identificar la empresa o el símbolo. "
+    "Prueba con algo como 'precio de la acción Microsoft' o 'precio accion MSFT'."
+)
+
+
+def _resolver_ticker(consulta: str):
     """
-    Busca y retorna el precio actual de una acción utilizando la librería yfinance.
-    
+    Identifica el ticker dentro de la consulta sanitizada.
+
+    Primero busca nombres de empresa dentro del texto (el nombre más largo
+    primero) y, si no hay coincidencia, interpreta un token corto como
+    símbolo bursátil escrito directamente por el usuario.
+    """
+    texto = sanitizar(consulta)
+    for empresa in sorted(COMPANY_TICKERS, key=len, reverse=True):
+        if re.search(rf"\b{re.escape(empresa)}\b", texto):
+            return COMPANY_TICKERS[empresa]
+
+    for token in re.findall(r"\b[a-z]{1,5}\b", texto):
+        if token not in PALABRAS_IGNORADAS:
+            return token.upper()
+
+    return None
+
+
+def _precio_y_divisa(ticker: str):
+    """Obtiene el precio actual y la divisa de cotización de un ticker."""
+    accion = yf.Ticker(ticker)
+    precio = None
+    divisa = None
+
+    info = getattr(accion, "fast_info", None)
+    if info is not None:
+        try:
+            precio = info["last_price"]
+        except Exception:
+            precio = None
+        try:
+            divisa = info["currency"]
+        except Exception:
+            divisa = None
+
+    if precio is None:
+        historial = accion.history(period="1d")
+        if not historial.empty:
+            precio = float(historial["Close"].iloc[-1])
+
+    if divisa is None:
+        try:
+            divisa = accion.info.get("currency")
+        except Exception:
+            divisa = None
+
+    return precio, divisa
+
+
+def obtener_precio_accion(driver, consulta: str) -> str:
+    """
+    Busca y retorna el precio actual y la divisa de una acción usando yfinance.
+
     Argumentos:
-        driver: Instancia de Selenium WebDriver (opcional).
-        user_input: Input del usuario que contiene el nombre de la empresa.
-    
+        driver: Instancia de Selenium WebDriver (no se usa, se mantiene por compatibilidad).
+        consulta: Texto del usuario que contiene el nombre de la empresa o el ticker.
+
     Retorna:
-        El precio formateado como cadena o un mensaje explicativo si no se encuentra.
+        Cadena con el precio y la divisa, o un mensaje amigable si no se encuentra.
     """
-    # Sanitizar el input para extraer únicamente el nombre de la empresa o el ticker
-    company_name = sanitizar(user_input)
-    
-    # Buscar si el nombre está en nuestro mapeo interno de tickers
-    ticker = COMPANY_TICKERS.get(company_name)
-    
-    # Si no está en el mapa, asumimos que el usuario pudo haber ingresado el Ticker directamente
+    ticker = _resolver_ticker(consulta)
     if not ticker:
-        ticker = company_name.upper()
+        return MENSAJE_SIN_TICKER
 
     try:
-        # Inicializar el objeto Ticker de yfinance
-        stock = yf.Ticker(ticker)
-        
-        # Obtener el historial del último día para extraer el precio de cierre más reciente
-        data = stock.history(period="1d")
-        
-        if not data.empty:
-            # Extraer el valor de la columna 'Close' de la última fila disponible
-            price = data['Close'].iloc[-1]
-            return f"${price:.2f}"
-        else:
-            return "No se encontraron datos de cotización (puede que el símbolo sea incorrecto o esté deslistado)."
-            
-    except Exception as e:
-        # Capturar errores de la API o problemas de red
-        return f"Error al consultar el precio de la acción: {e}"
+        precio, divisa = _precio_y_divisa(ticker)
+    except Exception:
+        return f"No pude consultar el precio de {ticker} en este momento. Intenta de nuevo más tarde."
+
+    if precio is None:
+        return f"No encontré cotización para {ticker}. Verifica que el símbolo sea correcto."
+
+    if divisa:
+        return f"El precio actual de {ticker} es {float(precio):,.2f} {divisa}."
+    return f"El precio actual de {ticker} es {float(precio):,.2f}."

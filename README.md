@@ -10,21 +10,23 @@ El proyecto sigue un diseño **modular y basado en intenciones**, lo que facilit
 graph TD
     User([Usuario]) --> Input[/Consulta de Texto/]
     Input --> Entry{Punto de Entrada}
-    Entry -- main.py --> Regex[Detección por Regex]
+    Entry -- main.py --> Regex[Detección por intención]
     Entry -- agente_selenium.py --> Selenium[Instancia Selenium]
-    
+
     Regex --> Sani[Sanitización utils/sanitizar.py]
     Selenium --> Sani
-    
+
     Sani --> Dispatcher{Selector de Función}
-    
+
     Dispatcher -- "Clima" --> Weather[funciones_agente/obtener_clima.py]
     Dispatcher -- "Acciones" --> Stocks[funciones_agente/obtener_precio_accion.py]
-    
-    Weather --> WAPI[API wttr.in]
+
+    Weather --> WAPI[Google + Selenium]
+    Weather -. respaldo .-> WAPI2[API wttr.in]
     Stocks --> SAPI[API yfinance]
-    
+
     WAPI --> Output[/Respuesta Final/]
+    WAPI2 --> Output
     SAPI --> Output
     Output --> User
 ```
@@ -34,8 +36,8 @@ graph TD
 ```text
 automatizacion_simple/
 ├── agente_selenium.py      # Agente avanzado con Selenium
-├── main.py                 # Chatbot básico por consola (Regex)
-├── test_chatbot.py         # Scripts de prueba y validación
+├── main.py                 # Chatbot por consola (procesar_input)
+├── test_chatbot.py         # Pruebas unitarias (unittest)
 ├── funciones_agente/       # Directorio de habilidades (Módulos)
 │   ├── __init__.py
 │   ├── obtener_clima.py    # Lógica de clima
@@ -57,7 +59,7 @@ La arquitectura de este proyecto se basa en tres principios fundamentales:
 ### Flujo de Ejecución
 1. **Entrada**: El usuario escribe una consulta (ej: "¿Cuál es el precio de Apple?").
 2. **Detección de Intención**: El sistema identifica si se trata de clima, acciones o comandos de salida.
-3. **Procesamiento (Sanitización)**: Se extrae la entidad relevante ("Apple") eliminando el ruido del lenguaje.
+3. **Procesamiento (Sanitización)**: Se normaliza el texto (minúsculas, sin tildes, `ñ`→`n`) y cada habilidad aísla la entidad relevante ("Apple", "CDMX").
 4. **Ejecución de Función**: Se invoca el módulo correspondiente pasándole el driver (si aplica) y el parámetro limpio.
 5. **Respuesta**: Se devuelve el resultado formateado al usuario.
 
@@ -99,12 +101,15 @@ pip install -r requirements.txt
 ```
 
 ### Ejecución
-Para el chatbot básico:
+Para el chatbot principal:
 ```bash
 python main.py
 ```
 
-Para el asistente con Selenium:
+Para el asistente con Selenium (respaldo):
 ```bash
 python agente_selenium.py
 ```
+
+Para salir del chat escribe `salir`, `exit`, `quit`, `adios` o `bye`
+(basta con que la frase contenga la palabra, por ejemplo `quiero salir`).

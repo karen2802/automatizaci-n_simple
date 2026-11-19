@@ -3,6 +3,9 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+graphify-out/
+AGENTS.md
+
 # Virtual environments
 .venv/
 venv/

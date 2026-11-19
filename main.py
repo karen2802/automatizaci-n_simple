@@ -1,74 +1,120 @@
+import os
 import re
-import sys
+
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
+
 # Importamos las funciones de lógica de negocio desde nuestro paquete de funciones
 from funciones_agente.obtener_precio_accion import obtener_precio_accion
 from funciones_agente.obtener_clima import obtener_clima
 # Importamos utilidades para limpiar el texto del usuario
 from utils.sanitizar import sanitizar
 
+PALABRAS_SALIDA = {"salir", "exit", "quit", "adios", "bye"}
+
+USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+)
+
+
+def crear_driver():
+    """Configura y crea el navegador Chrome en modo headless."""
+    options = Options()
+    options.add_argument("--headless")
+    options.add_argument("--disable-gpu")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-blink-features=AutomationControlled")
+    options.add_argument(f"user-agent={USER_AGENT}")
+
+    driver_path = ChromeDriverManager().install()
+    basename = os.path.basename(driver_path).lower()
+    if basename not in {"chromedriver", "chromedriver.exe"}:
+        dir_path = os.path.dirname(driver_path)
+        for candidato in ("chromedriver", "chromedriver.exe"):
+            binary_path = os.path.join(dir_path, candidato)
+            if os.path.exists(binary_path):
+                driver_path = binary_path
+                break
+
+    if os.name != "nt":
+        os.chmod(driver_path, 0o755)
+
+    return webdriver.Chrome(service=Service(driver_path), options=options)
+
+
+def es_comando_salida(user_input):
+    """Indica si el texto del usuario contiene una palabra de salida."""
+    texto = sanitizar(user_input)
+    return any(re.search(rf"\b{palabra}\b", texto) for palabra in PALABRAS_SALIDA)
+
+
+def procesar_input(user_input):
+    """
+    Determina la intención del usuario sobre el texto limpio.
+
+    Retorna:
+        La función del agente correspondiente o None si no se reconoce.
+    """
+    texto = sanitizar(user_input)
+    if "clima" in texto or "temperatura" in texto:
+        return obtener_clima
+    if "precio" in texto or "accion" in texto or "valor" in texto:
+        return obtener_precio_accion
+    return None
+
+
 def chatbot():
     """
     Función principal que inicia el chatbot interactivo por consola.
-    Maneja el ciclo de vida del chat, recibe el input del usuario y 
-    determina qué acción realizar basándose en expresiones regulares.
+    Maneja el ciclo de vida del navegador, recibe el input del usuario y
+    determina qué acción realizar según la intención detectada.
     """
     print("*** Chatbot v1.0.0***")
     print("Hola, soy el Chatbot v1.0.0. Puedo ayudarte a obtener precios de acciones o indicarte")
     print("la temperatura actual en cualquier ciudad del mundo.")
     print("Me puedes hacer preguntas, por ejemplo ¿cuál es el precio de una acción de Microsoft?")
-    print("¿cuál es la temperatura actual en la Ciudad de México?\n")
+    print("¿cuál es la temperatura actual en la Ciudad de México?")
+    print("Para terminar, escribe 'salir', 'exit', 'quit' o 'adios' (por ejemplo: 'quiero salir').\n")
 
-    # Ciclo infinito para mantener el chat activo hasta que el usuario decida salir
-    while True:
+    driver = None
+    try:
         try:
-            # Obtener y limpiar espacios en blanco del input del usuario
-            user_input = input("--> ").strip()
-            if not user_input:
-                continue
-            
-            # Comprobar si el usuario desea finalizar la conversación
-            if user_input.lower() in ["salir", "exit", "quit", "adiós", "adios"]:
-                print(">>> ¡Hasta luego!")
-                break
-
-            # Reglas para detectar intención de precio de acción (mejoradas)
-            # Buscamos patrones como "precio de apple", "accion de tesla", etc.
-            stock_match = re.search(r"(?:precio|stock|acción|accion)\s+(?:de\s+)?(?:la\s+|el\s+)?(?:acción\s+|accion\s+)?(?:de\s+)?([\w\s]+)", user_input, re.IGNORECASE)
-            
-            # Reglas para detectar intención de clima
-            # Buscamos patrones como "clima en oaxaca", "temperatura de madrid", etc.
-            weather_match = re.search(r"(?:temperatura|clima|tiempo)\s+(?:(?:en|de)\s+)?([\w\s?]+)", user_input, re.IGNORECASE)
-
-            # Caso 1: El usuario pregunta por acciones
-            if stock_match:
-                # El agente espera (driver, user_input). Pasamos None como driver en esta versión simple.
-                price = obtener_precio_accion(None, user_input)
-                if price:
-                    print(f">>> {price}")
-                else:
-                    print(">>> Lo siento, no pude encontrar el precio de la acción.")
-            
-            # Caso 2: El usuario pregunta por el clima
-            elif weather_match:
-                # El agente espera (driver, user_input)
-                temp = obtener_clima(None, user_input)
-                if temp:
-                    print(f">>> {temp}")
-                else:
-                    print(">>> Lo siento, no pude obtener el clima.")
-            
-            # Caso 3: No se detecta ninguna intención conocida
-            else:
-                print(">>> No estoy seguro de cómo ayudarte con eso. Prueba preguntando por el precio de una acción o el clima en una ciudad.")
-
-        except KeyboardInterrupt:
-            # Capturar Ctrl+C para salir elegantemente
-            print("\n>>> ¡Hasta luego!")
-            break
+            driver = crear_driver()
         except Exception as e:
-            # Capturar cualquier otro error inesperado para evitar que el programa se cierre
-            print(f">>> Ocurrió un error: {e}")
+            print(f">>> Advertencia: no se pudo iniciar el navegador ({e}).")
+            print(">>> El clima se consultará con el servicio de respaldo.\n")
 
-# Punto de entrada principal del script
+        while True:
+            try:
+                user_input = input("---> ").strip()
+                if not user_input:
+                    continue
+
+                if es_comando_salida(user_input):
+                    print(">>> ¡Hasta luego!")
+                    break
+
+                funcion_agente = procesar_input(user_input)
+                if funcion_agente is None:
+                    print(">>> No estoy seguro de cómo ayudarte con eso. Prueba preguntando por el precio de una acción o el clima en una ciudad.")
+                    continue
+
+                respuesta = funcion_agente(driver, sanitizar(user_input))
+                print(f">>> {respuesta}")
+
+            except KeyboardInterrupt:
+                print("\n>>> ¡Hasta luego!")
+                break
+            except Exception as e:
+                print(f">>> Ocurrió un error: {e}")
+    finally:
+        if driver is not None:
+            driver.quit()
+
+
 if __name__ == "__main__":
     chatbot()
